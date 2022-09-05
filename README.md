@@ -10,3 +10,6 @@ You should atempt to somethings:
 5) Don't forget to correct the folder in your GoogleDrive root for exporting the features and images
 
 The Otsu methodology was writen from: Otsu, N. (1979), A Threshold Selection Method from Gray-Level Histograms. IEEE Transactions on Systems, Man, and Cybernetics, 9(1), 62-66.
+
+Workflow:
+![image](https://user-images.githubusercontent.com/112116647/188515591-b869bd14-d2b4-424d-a942-a785f328eb61.png)
