@@ -1,19 +1,26 @@
 // Identifying the intertidal zone through standard deviation of NDWI images
 // Creating the collection
+function reflec_corr (image){ // function to apply the scale factor of Sentinel-2 bands
+  var opticalBands = image.select("B.").multiply(0.0001);
+    return image
+    .addBands(opticalBands, null, true);
+  }
 
 var img1 = ee.ImageCollection('COPERNICUS/S2_SR')
   .filterDate('2022-07-02', '2022-07-04') //image in low tide condition
-  .filterBounds(ee.Geometry.Point([-48.69, -26.32]));
+  .filterBounds(ee.Geometry.Point([-48.69, -26.32]))
+  .map(reflec_corr);
 
 var img2 = ee.ImageCollection('COPERNICUS/S2_SR')
   .filterDate('2022-06-17', '2022-06-19') //image in mean tide condition
-  .filterBounds(ee.Geometry.Point([-48.69, -26.32]));
-var col1 = img1.merge(img2);
+  .filterBounds(ee.Geometry.Point([-48.69, -26.32]))
+  .map(reflec_corr);
   
 var img3 = ee.ImageCollection('COPERNICUS/S2_SR')
   .filterDate('2022-06-12', '2022-06-14') //image in high tide condition
-  .filterBounds(ee.Geometry.Point([-48.69, -26.32]));
-var Bay_Plenty_collection = col1.merge(img3);
+  .filterBounds(ee.Geometry.Point([-48.69, -26.32]))
+  .map(reflec_corr);
+var Bay_Plenty_collection = img1.merge(img2).merge(img3);
 
 print (Bay_Plenty_collection);
 // Creating geometry to clip every image in the collection for a specific site
@@ -23,11 +30,11 @@ var geometry = ee.Geometry.Polygon(
             [-48.65947723388672,-26.31895972813747],
             [-48.74015808105469,-26.31895972813747],
             [-48.74015808105469,-26.37372339295363]]]);
-Map.setCenter(-48.701019287109375,-26.345729477120894, 11);
+Map.centerObject(geometry, 11);
 
 // Defining the NDWI, clip and mask funciton
 var calculate_NI = function (image) {
-  return image.normalizedDifference(['B8','B3']).rename('NDWI')}; // calculate the normalized difference water index
+  return image.normalizedDifference(['B3','B8']).rename('NDWI')}; // calculate the normalized difference water index (McFeeters, 1996)
 
 var clip_image = function (image){
   return image.clip(geometry)}; // clip the interest area
@@ -134,7 +141,7 @@ print (hist_intermare);
 
 // Creating vectors
 var vectors = zones.addBands(NWI_STD).reduceToVectors({ 
-  scale: 11,
+  scale: 10,
   geometryType: 'polygon',
   labelProperty: 'stdMasked',
   eightConnected: false,
@@ -172,7 +179,7 @@ var task = Export.table.toDrive({
   
 // Exporting images
 var ExportCol = function (col, folder, scale, tp, maxPixels, region) {
-  scale = 11,
+  scale = 10,
   maxPixels =  100e9;
   
   var nimg=col.size().getInfo();
@@ -199,13 +206,13 @@ var ExportCol = function (col, folder, scale, tp, maxPixels, region) {
         maxPixels: maxPixels}
         )}
 };
-var task2 = ExportCol(intertidal_zones, 'Intertidal_Zones', 11, 'float', 100e9, geometry);
+var task2 = ExportCol(intertidal_zones, 'Intertidal_Zones', 10, 'float', 100e9, geometry);
 Export.image.toDrive({
   image: NWI_STD, 
   description: 'NDWI_STD',
   folder: 'Intertidal_Zones', 
   fileNamePrefix: 'img_ndwi_std_0041',
   region: geometry, 
-  scale: 11,
+  scale: 10,
   maxPixels: 100e9});
   
