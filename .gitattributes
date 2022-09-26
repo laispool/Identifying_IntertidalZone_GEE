@@ -1,5 +1,0 @@
-*.rb linguist-language=JS
-
-*.kicad_pcb linguist-detectable
-*.sch linguist-detectable
-tools/export_bom.py -linguist-detectable
