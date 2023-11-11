@@ -1,0 +1,253 @@
+//Choose specific images, cloud free
+var img0 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230320T132239_20230320T132815_T22JGS');
+var img1 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230330T132239_20230330T132858_T22JGS');
+var img2 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230404T132231_20230404T132232_T22JGS');
+var img3 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230419T132239_20230419T132235_T22JGS');
+var img4 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230514T132231_20230514T132233_T22JGS');
+var img5 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230519T132239_20230519T132237_T22JGS');
+var img6 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230603T132241_20230603T132236_T22JGS');
+var img7 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230608T132239_20230608T132237_T22JGS');
+var img8 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230628T132239_20230628T132237_T22JGS');
+var img9 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230713T132241_20230713T132606_T22JGS');
+var img10 = ee.Image('COPERNICUS/S2_SR_HARMONIZED/20230807T132239_20230807T132237_T22JGS');
+
+// Create an image collection from the images
+var imageCollection = ee.ImageCollection.fromImages([img0, img1, img2, img3, img4, img5, img6, img7, img8, img9, img10]);
+print('Image Collection:', imageCollection);
+var Bay_Plenty_collection = imageCollection;
+print ('initial collection', Bay_Plenty_collection.size().getInfo());
+
+function reflec_corr (image){
+  var opticalBands = image.select('B.*').multiply(0.0001); //applying the scale factor of Sentinel-2 collection
+    return image
+    .addBands(opticalBands, null, true);
+  }
+
+var Bay_Plenty_collection = Bay_Plenty_collection.map(reflec_corr);
+print ('scaled collection',Bay_Plenty_collection);
+
+var vis_rgb = {max: 0.25, bands: ['B4', 'B3', 'B2']}; // to visualize in true color
+var singleBandVis = {'min': -0.5,'max': 1};
+Map.addLayer(Bay_Plenty_collection.first(), vis_rgb, "first image masked");
+
+///// PANSHARPENING
+var geeSharp = require('users/aazuspan/geeSharp:geeSharp'); // Import the geeSharp module
+// After analysing the charts, choose the band that showed the bigest r^2
+function sharpened (image) {
+  var sharp1 = geeSharp.sharpen(image.select(['B11']), image.select(['B8'])).rename ('B11_sharp');
+  var sharp2 = geeSharp.sharpen(image.select(['B12']), image.select(['B8'])).rename ('B12_sharp');
+  
+  return image.addBands([sharp1,sharp2])}
+
+var Bay_Plenty_collection = Bay_Plenty_collection.map(sharpened);
+print('sharpened collection',Bay_Plenty_collection);
+
+///// Creating geometry to clip every image in the collection for a specific site and defining some funtions:
+var geometry = ee.Geometry.Polygon(
+//// DELTA ENCHENTE
+[[[-48.6064338684082,-26.22352298843246],
+            [-48.55304718017578,-26.22352298843246],
+            [-48.55304718017578,-26.185018250078308],
+            [-48.6064338684082,-26.185018250078308],
+            [-48.6064338684082,-26.22352298843246]]]);
+Map.centerObject(geometry, 14);   
+
+//// NDWI and other index
+var NDWIindex = function(image) {
+ var ndwi = image.normalizedDifference(['B3', 'B8']).rename ('ndwi'); //Mc Feeters, 1996
+ var mndwi_sharp = image.normalizedDifference(['B3', 'B11_sharp']).rename ('mndwi_sharp');
+ var mndwi = image.normalizedDifference(['B3', 'B11']).rename ('mndwi');
+ return image.addBands([ndwi, mndwi_sharp,mndwi]);
+};
+
+var AWEIindex = function(image) {
+   var awei = image.expression('(B+ (2.5*G) -1.5*(N+S1) -(0.25*S2)) ',{ //Feyisa etal, 2014 (4 * (G - S)) - (0.25 * N + 2.75 * S)
+   B: image.select('B2'),
+   G: image.select('B3'), 
+   S1: image.select('B11_sharp'), 
+   S2: image.select('B12_sharp'),
+   N: image.select('B8'),
+   }).rename('awei');
+   
+   return image.addBands([awei]);
+};
+var clip_image = function (image){
+  return image.clip(geometry)}; // cut for the AOI
+  
+var mask_land = function (image){
+  var ndwi = image.select('mndwi_sharp');
+  return image.updateMask(ndwi.gte(0))}; // get only values greater or equal to 0
+
+///// APPLYING FUNCTIONS AND CLIPING
+var NWI = Bay_Plenty_collection.map(NDWIindex);// calculates NDWI;  
+print('post NDWI', NWI);
+var NWINoMask=NWI.map(clip_image); // Faz o corte
+
+//// WATER/LAND MASK
+var NWI=NWINoMask.map(mask_land);  //// apply the mask through the histogram value
+Map.addLayer(NWI.first().select('mndwi_sharp'),singleBandVis, "NDWI-Masked");
+Map.addLayer(NWINoMask.first().select('mndwi_sharp'),singleBandVis, "NDWI-No Masked",false);
+
+//// APPLYING THE AWEI
+var awei = NWI.map(AWEIindex);
+var aweiVis = {'max': 0.2, 'min': -0.2};
+Map.addLayer(awei.first().select('awei'),aweiVis, "AWEI index");
+
+// Visualize AWEI histogram
+var hist_NDWI_Mask = ui.Chart.image.histogram({image:awei.first().select('mndwi_sharp'), region: geometry, scale: 11})
+  .setOptions({title: 'Histogram NDWI masked'});
+print (hist_NDWI_Mask);
+
+var palette = ['blue','yellow'];
+var vis_params = {'min': -1,'max': 1,'dimensions': 500,'palette':palette };
+
+var hist_AWEI_Mask = ui.Chart.image.histogram({image:awei.first().select('awei'), region: geometry, scale: 11})
+  .setOptions({title: 'Histogram AWEI masked'});
+print (hist_AWEI_Mask);
+
+var NWI_STD = awei.select('awei').reduce(ee.Reducer.stdDev()); // Now there is only a single image in terms of standard deviation of AWEI
+Map.addLayer(NWI_STD, singleBandVis,'STD image');
+
+var hist_NWI_STD = ui.Chart.image.histogram({image:NWI_STD, region: geometry, scale: 11})
+  .setOptions({title: 'Histogram AWEI STD'});
+print (hist_NWI_STD);
+
+// USING THRESHOLDING METHOD: OTSU (1979):
+var histogram = NWI_STD.reduceRegion({
+  reducer: ee.Reducer.histogram(),
+  geometry: geometry, 
+  scale: 10
+});
+var AWEI_stdDev = histogram.get('awei_stdDev');
+print(AWEI_stdDev);
+
+var otsu = function(histogram) {
+  var counts = ee.Array(ee.Dictionary(AWEI_stdDev).get('histogram'));
+  var means = ee.Array(ee.Dictionary(AWEI_stdDev).get('bucketMeans'));
+  var size = means.length().get([0]);
+  var total = counts.reduce(ee.Reducer.sum(), [0]).get([0]);
+  var sum = means.multiply(counts).reduce(ee.Reducer.sum(), [0]).get([0]);
+  var mean = sum.divide(total);
+
+  var indices = ee.List.sequence(1, size);
+  
+  // Compute between sum of squares, where each mean partitions the data.
+  var bss = indices.map(function(i) {
+    var aCounts = counts.slice(0, 0, i);
+    var aCount = aCounts.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var aMeans = means.slice(0, 0, i);
+    var aMean = aMeans.multiply(aCounts)
+        .reduce(ee.Reducer.sum(), [0]).get([0])
+        .divide(aCount);
+    var bCount = total.subtract(aCount);
+    var bMean = sum.subtract(aCount.multiply(aMean)).divide(bCount);
+    return aCount.multiply(aMean.subtract(mean).pow(2)).add(
+          bCount.multiply(bMean.subtract(mean).pow(2)));
+  });
+
+  print(ui.Chart.array.values(ee.Array(bss), 0, means));
+
+  // Return the mean value corresponding to the maximum BSS.
+  return means.sort(bss).get([-1]);
+};
+
+var threshold = otsu(histogram.get('histogram'));
+print('the threshold is:    ', threshold);
+
+///// Masking through the STD histogram
+// valores maiores que X*STD (take off X of  the histogram)
+var stdMasked = NWI_STD.updateMask(NWI_STD.gte(threshold)); //EQ("="), GTE(">="), GT(">"), LT("<"), LTE("<=");
+var zones=NWI_STD.gte(threshold); //threshold is mean value from the histogram
+var zones = zones.updateMask(zones.neq(0));
+
+Map.addLayer(zones, vis_params, 'stdMasked', false); 
+// Visualizar histograma pós corte
+var hist_intermare = stdMasked.reduceRegion({
+  reducer: ee.Reducer.histogram(),
+  geometry: geometry, 
+  scale: 10
+});
+
+var hist_intermare = ui.Chart.image.histogram({image:stdMasked, region:geometry, scale:11})
+  .setOptions({title: 'Intertidal histogram'});
+print (hist_intermare);
+
+///// Transform to vectors
+var vectors = zones.addBands(NWI_STD).reduceToVectors({ 
+  crs: 'EPSG:4326',
+  scale: 10,
+  geometryType:'polygon',
+  labelProperty: 'stdMasked',
+  eightConnected: false,
+  geometry: geometry,
+  maxPixels: 100e9,
+  geometryInNativeProjection: true,
+  reducer: ee.Reducer.mean()
+});
+
+///// Function to clip by the  vectors
+var clip_image2 = function(image){
+  return image.clip(vectors);
+};
+
+var NWI2 = Bay_Plenty_collection.map(NDWIindex).select('ndwi');
+
+print("Clip of images", NWI2);
+var intertidal_zones = NWI2.map(clip_image2);
+print(intertidal_zones)
+// Displaying
+var palette = ['white','blue'];
+var vis_params = {
+              'min': -0.5,
+              'max': 1,
+              'dimensions': 500,
+              'palette':palette,             
+              };
+Map.addLayer(intertidal_zones, vis_params, 'intertidal zone');
+
+//// Export vetors
+var task = Export.table.toDrive({
+  collection: vectors,
+  description:'Intertidal_Zones_aweiDelta',
+  folder: 'Intertidal_Zones',
+  fileFormat: 'SHP'});
+  
+//// Export images
+var ExportCol = function (col, folder, scale, tp, maxPixels, region) {
+  scale = 10,
+  maxPixels =  100e9;
+  
+  var nimg=col.size().getInfo();
+  var colList = col.toList(nimg);
+  var n = colList.size().getInfo();
+
+  for (var i = 0 ; i < n; i++) {
+    var img = ee.Image(colList.get(i));
+    var id = img.get('system:id').getInfo() //.id().getInfo();
+    region = region; // img.geometry().bounds().getInfo()["coordinates"];
+
+      var imgtype = {"float":img.toFloat(), 
+                 "byte":img.toByte(), 
+                 "int":img.toInt(),
+                 "double":img.toDouble()};
+
+      Export.image.toDrive({
+        image:imgtype[tp],
+        description: id,
+        folder: folder,
+        fileNamePrefix: id + "_ndwi",
+        region: region,
+        scale: scale,
+        maxPixels: maxPixels}
+        )}
+};
+var task2 = ExportCol(intertidal_zones, 'Intertidal_Zones', 10, 'float', 100e9, geometry);
+
+Export.image.toDrive({
+  image: NWI_STD, 
+  description:'Zones_AWEI_Delta',
+  folder: 'Intertidal_Zones', 
+  fileNamePrefix:'awei_std_Delta',
+  region:geometry, 
+  scale: 10,
+  maxPixels: 100e9});
